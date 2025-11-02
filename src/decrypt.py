@@ -8,11 +8,14 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Tuple
-QUADGRAMS_PATH = "../instructions/quadgrams_frequency.txt"
-ENCODED_PATH   = "../instructions/encoded_content.txt"
+
+
+QUADGRAMS_PATH = "instructions/quadgrams_frequency.txt"
+ENCODED_PATH   = "instructions/encoded_content.txt"
 ALPHABET = string.ascii_uppercase
 A2I = {c:i for i, c in enumerate(ALPHABET)}
 I2A = {i:c for i, c in enumerate(ALPHABET)}
+
 # ---------------------------
 # Utilidades
 # ---------------------------
@@ -20,13 +23,11 @@ def only_letters(text: str) -> str:
     """Mantém apenas letras A–Z, tudo maiúsculo."""
     return "".join(ch for ch in text.upper() if 'A' <= ch <= 'Z')
 
-
 def apply_caesar(text: str, shift: int) -> str:
     """Aplica cifra de César com shift (decifra quando shift é negativo)."""
     return "".join(
         I2A[(A2I[ch] - shift) % 26] for ch in text if 'A' <= ch <= 'Z'
     )
-
 
 def apply_substitution(cipher: str, key_map: Dict[str, str]) -> str:
     """Aplica substituição letra a letra usando o dicionário {CIPHER→PLAIN}."""
@@ -34,7 +35,6 @@ def apply_substitution(cipher: str, key_map: Dict[str, str]) -> str:
         key_map.get(c, c) if 'A' <= c <= 'Z' else c
         for c in cipher
     )
-
 
 def decode_binary_file(path: str) -> str:
     """Lê binários (em texto) e converte para caracteres ASCII."""
@@ -56,6 +56,7 @@ def decode_binary_file(path: str) -> str:
 
 def get_timestamp():
     return datetime.now().timestamp()
+
 # ---------------------------
 # Pontuação por Quad-grams
 # ---------------------------
@@ -91,6 +92,7 @@ class QuadgramScorer:
             g = t[i:i+4]
             s += self.log_probs.get(g, self.floor)
         return s
+
 # ---------------------------
 # Quebra por César (força bruta)
 # ---------------------------
@@ -102,31 +104,27 @@ def break_caesar(cipher: str, scorer: QuadgramScorer, top_k: int = 5) -> List[Tu
         candidates.append((shift, score, pt))
     candidates.sort(key=lambda x: x[1], reverse=True)
     return candidates[:top_k]
+
 # ---------------------------
 # Quebra por Substituição (hill-climbing + restarts) — versão simples
 # ---------------------------
-
 def random_key() -> Dict[str, str]:
     """Gera uma chave aleatória (permuta o alfabeto). Mapeia CIPHER->PLAIN."""
     perm = list(ALPHABET)
     random.shuffle(perm)
     return {c: p for c, p in zip(ALPHABET, perm)}
 
-
 def key_to_str(key_map: Dict[str, str]) -> str:
     """Converte o dicionário de chave para string de 26 letras (A..Z -> PLAIN)."""
     return "".join(key_map[c] for c in ALPHABET)
-
 
 def str_to_key(s: str) -> Dict[str, str]:
     """Converte a string de 26 letras de volta para dicionário CIPHER->PLAIN."""
     return {c: p for c, p in zip(ALPHABET, s)}
 
-
 def decrypt_with_key(cipher: str, key_s: str) -> str:
     """Aplica a chave (string) ao texto cifrado e retorna apenas letras A..Z decifradas."""
     return apply_substitution(only_letters(cipher), str_to_key(key_s))
-
 
 def tweak_key(key_s: str) -> str:
     """Gera um vizinho trocando duas letras do mapeamento (swap simples)."""
@@ -134,7 +132,6 @@ def tweak_key(key_s: str) -> str:
     lst = list(key_s)
     lst[i], lst[j] = lst[j], lst[i]
     return "".join(lst)
-
 
 def frequency_seed_key(cipher: str) -> str:
     """Semente baseada em frequência: mapeia as letras mais comuns do CIPHER
@@ -158,7 +155,6 @@ def frequency_seed_key(cipher: str) -> str:
             dest[i] = rest.pop()
 
     return "".join(dest)
-
 
 def hill_climb_substitution(
     cipher: str,
@@ -188,7 +184,7 @@ def hill_climb_substitution(
 
         plain = decrypt_with_key(cipher, key_s)
         score = scorer.score(plain)
-        infos.append(("initial", score, i, None, get_timestamp()))
+        infos.append(("initial", score, score, i, None, get_timestamp()))
 
         no_gain = 0
         for j in range(max_iters):
@@ -198,30 +194,32 @@ def hill_climb_substitution(
 
             if cand_score > score:
                 key_s, plain, score = cand_key, cand_plain, cand_score
-                infos.append(("good candidate", cand_score, i, j, get_timestamp()))
+                infos.append(("good candidate", cand_score, score, i, j, get_timestamp()))
                 no_gain = 0
             else:
                 no_gain += 1
                 if no_gain >= patience:  # estagnou -> parte para outro restart
-                    infos.append(("restarting", cand_score, i, j, get_timestamp()))
+                    infos.append(("restarting", cand_score, score, i, j, get_timestamp()))
                     break
                 else:
-                    infos.append(("bad candidate", cand_score, i, j, get_timestamp()))
+                    infos.append(("bad candidate", cand_score, score, i, j, get_timestamp()))
 
         if score > best_score:
             best_text, best_score = plain, score
-            infos.append(("really good candidate", score, i, j, get_timestamp()))
+            infos.append(("really good candidate", score, score, i, j, get_timestamp()))
     
     df = pd.DataFrame(
         infos, 
-        columns=["type", "score", "i", "j", "timestamp"]
+        columns=["type", "this_iteration_score", "best_score_so_far", "i", "j", "timestamp"]
     )
     df["elapsed_time"] = df["timestamp"] - initial_timestamp
 
+    filename = f"scores_{round(initial_timestamp)}.csv"
     df.to_csv(
-        f"scores_{round(initial_timestamp)}.csv", 
+        filename, 
         index=False,
     )
+    print(f"Dados de scores salvos em '{filename}'")
     
     return best_text, best_score
 
@@ -229,17 +227,14 @@ def hill_climb_substitution(
 # ---------------------------
 # Heurística de decisão e main
 # ---------------------------
-
 def likely_caesar_gain(score_caesar: float, score_sub: float, margem: float = 10.0) -> bool:
     """Decide por César se o melhor score de César não estiver muito pior que o de Substituição.
     'margem' é um colchão empírico (em log10). Quanto menor, mais exigente."""
     return score_caesar > (score_sub - margem)
 
-
 def chunk_text(t: str, width: int = 80) -> str:
     """Quebra o texto em linhas legíveis no terminal."""
     return "\n".join(t[i:i+width] for i in range(0, len(t), width))
-
 
 def main():
     # 1) Carrega os quad-grams (tabela de frequências p/ pontuar “quão inglês” é um texto)
@@ -271,9 +266,9 @@ def main():
     print("\n[4/4] Tentando Substituição (hill-climb + restarts)…")
     sub_text, sub_score = hill_climb_substitution(
         raw, scorer,
-        max_iters=3000,   # iterações por restart
-        restarts=40,      # quantos recomeços
-        patience=800      # para quando não melhora
+        max_iters=1000,   # iterações por restart
+        restarts=5,      # quantos recomeços
+        patience=200      # para quando não melhora
     )
     print(f"Melhor Substituição: score={sub_score:.2f}")
     print("Preview:", sub_text[:70], "…")
